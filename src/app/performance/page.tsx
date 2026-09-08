@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Chart from 'chart.js/auto';
 import { useData } from '@/contexts/DataContext';
+import { API_BASE_URL } from '@/lib/api';
 
 interface GSCRow {
   keys?: string[];
@@ -110,7 +111,7 @@ export default function PerformancePage() {
         params.append('device', device);
       }
 
-      const response = await fetch(`http://localhost:5001/api/data?${params}`);
+      const response = await fetch(`${API_BASE_URL}/api/data?${params}`);
       
       if (!response.ok) {
         const errorText = await response.text();

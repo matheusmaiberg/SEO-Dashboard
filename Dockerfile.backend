@@ -1,0 +1,20 @@
+# Backend (Flask) — API do Google Search Console / Trends
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY backend_requirements.txt ./
+RUN pip install --no-cache-dir -r backend_requirements.txt
+
+COPY backend_api.py algo_updates.json ./
+
+# dashboard_config.json, authorizedcreds.dat e authorized_trends_token.json
+# são gerados/lidos em runtime a partir de DATA_DIR. Aponte DATA_DIR para um
+# volume persistente (veja docker-compose.yml) para que sobrevivam a
+# redeploys. Coloque também seu client_secret.json dentro desse volume e
+# aponte "credentialsPath" (tela Settings) para ele, ex.: /data/client_secret.json
+ENV PORT=5001
+ENV DATA_DIR=/data
+EXPOSE 5001
+
+CMD ["python", "backend_api.py"]

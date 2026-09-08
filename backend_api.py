@@ -23,17 +23,33 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleRequest
 
 app = Flask(__name__)
-# Enable CORS for Next.js frontend with explicit configuration
+
+# Enable CORS for the Next.js frontend. In production (Coolify), set
+# FRONTEND_ORIGIN to the frontend's public URL (comma-separated for
+# multiple origins). Defaults cover local development.
+_default_origins = "http://localhost:3000,http://127.0.0.1:3000"
+_allowed_origins = [
+    origin.strip()
+    for origin in os.environ.get("FRONTEND_ORIGIN", _default_origins).split(",")
+    if origin.strip()
+]
 CORS(app, resources={
     r"/api/*": {
-        "origins": ["http://localhost:3000", "http://127.0.0.1:3000"],
+        "origins": _allowed_origins,
         "methods": ["GET", "POST", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"]
     }
 })
 
+# Diretório onde arquivos gerados em runtime (config e tokens OAuth) são
+# lidos/gravados. Configurável via DATA_DIR para apontar a um volume
+# persistente em deploys containerizados (Coolify); por padrão usa a pasta
+# do próprio script, mantendo o comportamento local de sempre.
+DATA_DIR = os.environ.get('DATA_DIR', os.path.dirname(__file__))
+os.makedirs(DATA_DIR, exist_ok=True)
+
 # Config file path
-CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'dashboard_config.json')
+CONFIG_FILE = os.path.join(DATA_DIR, 'dashboard_config.json')
 
 # Global variables
 webmasters_service = None
@@ -190,8 +206,10 @@ def initialize_openai_client():
     else:
         openai_client = None
 
-def authorize_creds(creds_path, authorized_creds_path='authorizedcreds.dat'):
+def authorize_creds(creds_path, authorized_creds_path=None):
     """Authorize and return the Webmasters API service"""
+    if authorized_creds_path is None:
+        authorized_creds_path = os.path.join(DATA_DIR, 'authorizedcreds.dat')
     try:
         SCOPES = ['https://www.googleapis.com/auth/webmasters.readonly']
         
@@ -821,7 +839,7 @@ def clear_settings():
     
     try:
         # Delete authorized credentials file
-        authorized_creds_path = 'authorizedcreds.dat'
+        authorized_creds_path = os.path.join(DATA_DIR, 'authorizedcreds.dat')
         if os.path.exists(authorized_creds_path):
             try:
                 os.remove(authorized_creds_path)
@@ -1241,7 +1259,7 @@ def trends_analyze():
             gsc_series = []
 
         # ── Step 3: Google Trends ─────────────────────────────────────────────
-        token_file = os.path.join(os.path.dirname(__file__), 'authorized_trends_token.json')
+        token_file = os.path.join(DATA_DIR, 'authorized_trends_token.json')
         try:
             trends_creds = load_trends_creds(token_file, trends_creds_path)
         except Exception as e:
@@ -1420,29 +1438,34 @@ def list_routes():
 
 if __name__ == '__main__':
     import warnings
-    import os
-    
+
     # Suppress multiprocessing resource tracker warnings (they're harmless)
     warnings.filterwarnings('ignore', category=UserWarning, module='multiprocessing.resource_tracker')
-    
-    # Set environment variable to prevent multiprocessing issues with Flask reloader
-    os.environ['FLASK_ENV'] = 'development'
-    
-    print("Starting GSC Dashboard Backend...")
-    
+
+    # PORT/HOST/DEBUG are configurable via env vars so the same image works
+    # locally and behind Coolify (which assigns/expects the container port).
+    port = int(os.environ.get('PORT', 5001))
+    host = os.environ.get('HOST', '0.0.0.0')
+    debug = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
+
+    if debug:
+        os.environ['FLASK_ENV'] = 'development'
+
+    print(f"Starting GSC Dashboard Backend on {host}:{port} (debug={debug})...")
+
     # Initialize OpenAI client
     initialize_openai_client()
-    
+
     # Initialize GSC service
     init_gsc()
-    
+
     try:
         # Use use_reloader=False to prevent multiprocessing conflicts
         # This is safer when using pandas and other libraries that use multiprocessing
-        app.run(debug=True, port=5001, use_reloader=False, threaded=True)
+        app.run(debug=debug, host=host, port=port, use_reloader=False, threaded=True)
     except KeyboardInterrupt:
         print("\nShutting down backend...")
     except Exception as e:
         print(f"Error running backend: {e}")
         import traceback
-        traceback.print_exc() 
+        traceback.print_exc()

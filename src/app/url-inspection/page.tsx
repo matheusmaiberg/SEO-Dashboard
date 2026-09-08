@@ -5,6 +5,7 @@ import { useData } from '@/contexts/DataContext';
 import { Button } from '@/components/ui/button';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faMagnifyingGlass, faSpinner, faCheckCircle, faExclamationTriangle, faInfoCircle } from '@fortawesome/free-solid-svg-icons';
+import { API_BASE_URL } from '@/lib/api';
 
 interface UrlInspectionResult {
   inspectionResult?: {
@@ -89,7 +90,7 @@ export default function UrlInspectionPage() {
     setResult(null);
 
     try {
-      const response = await fetch('http://localhost:5001/api/url-inspect', {
+      const response = await fetch(`${API_BASE_URL}/api/url-inspect`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

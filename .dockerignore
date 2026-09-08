@@ -1,0 +1,23 @@
+node_modules
+.next
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+
+__pycache__
+*.pyc
+venv
+.venv
+
+# Segredos e dados gerados em runtime — nunca devem ir para a imagem
+authorizedcreds.dat
+authorized_trends_token.json
+dashboard_config.json
+client_secret.json
+client_secrets.json
+credentials.json
+
+README.md
+DATA_PERSISTENCE.md

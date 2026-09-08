@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faExclamationTriangle, faTimes, faCog, faArrowRight } from '@fortawesome/free-solid-svg-icons';
 import Link from 'next/link';
+import { API_BASE_URL } from '@/lib/api';
 
 export default function AuthBanner() {
   const pathname = usePathname();
@@ -14,7 +15,7 @@ export default function AuthBanner() {
 
   const checkAuthStatus = async () => {
     try {
-      const response = await fetch('http://localhost:5001/api/status');
+      const response = await fetch(`${API_BASE_URL}/api/status`);
       if (response.ok) {
         const data = await response.json();
         setIsAuthenticated(data.gsc_connected || false);

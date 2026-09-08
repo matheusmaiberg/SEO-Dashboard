@@ -167,6 +167,27 @@ npm run dev
 
 The frontend runs on `http://localhost:3000`.
 
+## Deploy with Docker / Coolify
+
+The repo ships with `Dockerfile` (frontend), `Dockerfile.backend` (backend) and a root `docker-compose.yml`, so linking this repo in Coolify as a **Docker Compose** resource builds and runs both services with a single configuration.
+
+1. In Coolify, create a new resource pointing at this repository and let it detect `docker-compose.yml`.
+2. Set these environment variables on the resource (see `.env.example`):
+   - `NEXT_PUBLIC_API_URL` — the backend's **public** URL as reached by the user's browser (e.g. `https://api.yourdomain.com`). This is baked in at build time, so set it before the first build.
+   - `FRONTEND_ORIGIN` — the frontend's public URL (e.g. `https://dashboard.yourdomain.com`), used for the backend's CORS allow-list.
+3. Give the `frontend` service a domain on port `3000` and the `backend` service a domain on port `5001` (Coolify assigns these per compose service).
+4. Attach persistent storage: the `backend` service mounts a `backend_data` volume at `/data` (via `DATA_DIR`) to keep `dashboard_config.json`, `authorizedcreds.dat` and `authorized_trends_token.json` across redeploys.
+5. Upload your Google `client_secret.json` into that same volume (e.g. `/data/client_secret.json`) and point `credentialsPath` in the **Settings** page to it.
+
+> **Heads-up on OAuth:** authorizing GSC/Trends credentials opens a local browser consent flow, which doesn't work on a headless server. Run the backend locally once (`python3 backend_api.py`) to complete authorization, then copy the resulting `authorizedcreds.dat` / `authorized_trends_token.json` into the server's `/data` volume.
+
+To run the same setup locally:
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
 ## Project Structure
 
 ```

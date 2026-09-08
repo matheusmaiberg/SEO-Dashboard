@@ -10,6 +10,7 @@ import { faDownload, faBrain, faRefresh, faExclamationTriangle, faMouse, faEye, 
 import { Button } from '@/components/ui/button';
 import { DataTable } from '@/components/ui/data-table';
 import { queryColumns, pageColumns, countryColumns, GSCDataRow } from '@/components/dashboard/columns';
+import { API_BASE_URL } from '@/lib/api';
 
 // Annotation plugin will be loaded via script tag to match Chart.js CDN loading
 declare global {
@@ -955,9 +956,9 @@ export default function Dashboard() {
         params.append('filterValue', advancedFilter.value);
       }
 
-      console.log(`DEBUG: API request URL: http://localhost:5001/api/data?${params.toString()}`);
+      console.log(`DEBUG: API request URL: ${API_BASE_URL}/api/data?${params.toString()}`);
         
-      const response = await fetch(`http://localhost:5001/api/data?${params}`);
+      const response = await fetch(`${API_BASE_URL}/api/data?${params}`);
       
       if (!response.ok) {
         const errorText = await response.text();
@@ -1483,7 +1484,7 @@ export default function Dashboard() {
     setInsightsLoading({...insightsLoading, daily: true});
     
     try {
-      const response = await fetch('http://localhost:5001/api/insights/daily', {
+      const response = await fetch(`${API_BASE_URL}/api/insights/daily`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1522,7 +1523,7 @@ export default function Dashboard() {
     setInsightsLoading({...insightsLoading, queries: true});
     
     try {
-      const response = await fetch('http://localhost:5001/api/insights/queries', {
+      const response = await fetch(`${API_BASE_URL}/api/insights/queries`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

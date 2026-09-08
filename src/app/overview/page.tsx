@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import Chart from 'chart.js/auto';
 import { useData } from '@/contexts/DataContext';
+import { API_BASE_URL } from '@/lib/api';
 
 interface GSCRow {
   keys?: string[];
@@ -78,7 +79,7 @@ export default function OverviewPage() {
   useEffect(() => {
     if (sites.length > 0 && topSites.length === 0) {
       // Check if there are saved overview sites in settings
-      fetch('http://localhost:5001/api/settings')
+      fetch(`${API_BASE_URL}/api/settings`)
         .then(res => res.json())
         .then(settingsData => {
           if (settingsData.overviewSites && settingsData.overviewSites.length > 0) {
@@ -135,7 +136,7 @@ export default function OverviewPage() {
           params.append('device', overviewDevice);
         }
 
-        const response = await fetch(`http://localhost:5001/api/data?${params}`);
+        const response = await fetch(`${API_BASE_URL}/api/data?${params}`);
         
         if (!response.ok) {
           const errorText = await response.text();
