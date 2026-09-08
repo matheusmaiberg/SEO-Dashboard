@@ -30,6 +30,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [authorizing, setAuthorizing] = useState(false);
+  const [authorizingTrends, setAuthorizingTrends] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [showApiKey, setShowApiKey] = useState(true);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -37,6 +38,30 @@ export default function SettingsPage() {
   // Load settings on mount
   useEffect(() => {
     loadSettings();
+  }, []);
+
+  // Handle the redirect back from Google's OAuth consent screen
+  // (/api/authorize/callback and /api/trends/authorize/callback land here).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const authorized = params.get('authorized');
+    const trendsAuthorized = params.get('trendsAuthorized');
+    const error = params.get('error');
+
+    if (authorized === '1') {
+      setMessage({ type: 'success', text: 'Credentials authorized successfully! You can now use the dashboard.' });
+    } else if (authorized === '0') {
+      setMessage({ type: 'error', text: `Authorization failed${error ? ` (${error})` : ''}.` });
+    } else if (trendsAuthorized === '1') {
+      setMessage({ type: 'success', text: 'Google Trends authorized successfully!' });
+    } else if (trendsAuthorized === '0') {
+      setMessage({ type: 'error', text: `Trends authorization failed${error ? ` (${error})` : ''}.` });
+    }
+
+    if (authorized !== null || trendsAuthorized !== null) {
+      window.history.replaceState({}, '', window.location.pathname);
+      loadSettings();
+    }
   }, []);
 
   const loadSettings = async () => {
@@ -127,33 +152,50 @@ export default function SettingsPage() {
     setAuthorizing(true);
     setMessage(null);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/authorize`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          credentialsPath: settings.credentialsPath
-        })
-      });
+      // Ask the backend for a Google consent URL, then send the user's own
+      // browser there. Google redirects back to /api/authorize/callback,
+      // which lands the user back on this page with ?authorized=1|0. This
+      // works whether the backend is local or on a remote server — unlike
+      // opening a browser directly on the machine running the backend.
+      const response = await fetch(
+        `${API_BASE_URL}/api/authorize/start?credentialsPath=${encodeURIComponent(settings.credentialsPath)}`
+      );
+      const result = await response.json();
 
-      if (response.ok) {
-        const result = await response.json();
-        setSettings({ ...settings, isAuthorized: result.authorized || false });
-        if (result.authorized) {
-          setMessage({ type: 'success', text: 'Credentials authorized successfully! You can now use the dashboard.' });
-        } else {
-          setMessage({ type: 'error', text: result.message || 'Authorization failed' });
-        }
-      } else {
-        const error = await response.json();
-        setMessage({ type: 'error', text: error.error || 'Failed to authorize credentials' });
+      if (response.ok && result.authUrl) {
+        window.location.href = result.authUrl;
+        return;
       }
-    } catch (error) {
-      console.error('Error authorizing credentials:', error);
-      setMessage({ type: 'error', text: 'Failed to authorize credentials. Make sure the backend is running.' });
-    } finally {
+
+      setMessage({ type: 'error', text: result.error || 'Failed to start authorization' });
       setAuthorizing(false);
+    } catch (error) {
+      console.error('Error starting authorization:', error);
+      setMessage({ type: 'error', text: 'Failed to authorize credentials. Make sure the backend is running.' });
+      setAuthorizing(false);
+    }
+  };
+
+  const authorizeTrends = async () => {
+    setAuthorizingTrends(true);
+    setMessage(null);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/trends/authorize/start?trendsCredentialsPath=${encodeURIComponent(settings.trendsCredentialsPath)}`
+      );
+      const result = await response.json();
+
+      if (response.ok && result.authUrl) {
+        window.location.href = result.authUrl;
+        return;
+      }
+
+      setMessage({ type: 'error', text: result.error || 'Failed to start Trends authorization' });
+      setAuthorizingTrends(false);
+    } catch (error) {
+      console.error('Error starting Trends authorization:', error);
+      setMessage({ type: 'error', text: 'Failed to authorize Trends. Make sure the backend is running.' });
+      setAuthorizingTrends(false);
     }
   };
 
@@ -309,6 +351,14 @@ export default function SettingsPage() {
               <p className="text-xs text-gray-500">
                 Path to your Google Trends OAuth client_secret.json. Must have the <code>searchtrends</code> scope enabled in Google Cloud Console.
               </p>
+              <button
+                onClick={authorizeTrends}
+                disabled={authorizingTrends || !settings.trendsCredentialsPath}
+                className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center space-x-2"
+              >
+                {authorizingTrends && <FontAwesomeIcon icon={faSpinner} className="animate-spin" />}
+                <span>{authorizingTrends ? 'Redirecting...' : 'Authorize Trends'}</span>
+              </button>
             </div>
 
             {/* Authorization Status */}

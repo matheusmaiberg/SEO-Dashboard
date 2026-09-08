@@ -4,13 +4,14 @@ GSC Dashboard Backend API
 Flask API to serve Google Search Console data to the Next.js frontend
 """
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, redirect
 from flask_cors import CORS
 import sys
 import os
 import argparse
 import datetime
 import time
+import secrets
 import httplib2
 from apiclient.discovery import build
 from oauth2client import client, file, tools
@@ -48,6 +49,26 @@ CORS(app, resources={
 DATA_DIR = os.environ.get('DATA_DIR', os.path.dirname(__file__))
 os.makedirs(DATA_DIR, exist_ok=True)
 
+# URL pública do próprio backend, usada para montar o redirect_uri do fluxo
+# OAuth (precisa bater com o que está cadastrado no Google Cloud Console).
+# Se não definida, cai para a URL da requisição atual (funciona em dev local).
+BACKEND_PUBLIC_URL = os.environ.get('BACKEND_PUBLIC_URL', '').rstrip('/')
+
+# Origem do frontend para onde o navegador é redirecionado ao fim do fluxo
+# OAuth. Usa a primeira das origens permitidas por CORS.
+FRONTEND_REDIRECT_ORIGIN = _allowed_origins[0] if _allowed_origins else 'http://localhost:3000'
+
+# Flows OAuth pendentes (state -> dict com o objeto flow e o caminho do
+# client_secret.json), aguardando o redirect de volta do Google em
+# /api/authorize/callback ou /api/trends/authorize/callback. Em memória:
+# assume um único worker/processo (verdadeiro para o `python backend_api.py`
+# usado por este projeto).
+_pending_oauth_flows = {}
+
+
+def _oauth_redirect_base():
+    return BACKEND_PUBLIC_URL or request.host_url.rstrip('/')
+
 # Config file path
 CONFIG_FILE = os.path.join(DATA_DIR, 'dashboard_config.json')
 
@@ -75,6 +96,12 @@ TRENDS_BASE_URLS = [
 
 
 def load_trends_creds(token_file: str, client_secrets: str) -> Credentials:
+    """
+    Load stored Trends credentials, refreshing if needed. Does NOT run an
+    interactive OAuth flow — that requires a real browser and is handled
+    separately via /api/trends/authorize/start (redirect-based, works on a
+    headless server). Raises if no valid token is available yet.
+    """
     creds = None
     if os.path.exists(token_file):
         creds = Credentials.from_authorized_user_file(token_file, TRENDS_SCOPES)
@@ -84,14 +111,10 @@ def load_trends_creds(token_file: str, client_secrets: str) -> Credentials:
             f.write(creds.to_json())
         return creds
     if not creds or not creds.valid:
-        from google_auth_oauthlib.flow import InstalledAppFlow
-        flow = InstalledAppFlow.from_client_secrets_file(client_secrets, TRENDS_SCOPES)
-        try:
-            creds = flow.run_local_server(port=0)
-        except Exception:
-            creds = flow.run_console()
-        with open(token_file, "w") as f:
-            f.write(creds.to_json())
+        raise RuntimeError(
+            "Google Trends is not authorized yet. Go to Settings and click "
+            "'Authorize Trends' to grant access."
+        )
     return creds
 
 
@@ -831,6 +854,138 @@ def authorize():
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/authorize/start', methods=['GET'])
+def authorize_start():
+    """
+    Start a browser-based OAuth flow for GSC credentials. Unlike /api/authorize
+    (which opens a browser on the machine running the backend — unusable on a
+    headless server), this returns a Google consent URL for the frontend to
+    send the user's own browser to. Google redirects back to
+    /api/authorize/callback when the user approves.
+    """
+    creds_path = request.args.get('credentialsPath', '')
+    if not creds_path:
+        config = load_config()
+        creds_path = config.get('credentialsPath', '')
+
+    if not creds_path:
+        return jsonify({"error": "No credentials path provided"}), 400
+    if not os.path.exists(creds_path):
+        return jsonify({"error": f"Credentials file not found at {creds_path}"}), 400
+
+    try:
+        SCOPES = ['https://www.googleapis.com/auth/webmasters.readonly']
+        redirect_uri = f"{_oauth_redirect_base()}/api/authorize/callback"
+        flow = client.flow_from_clientsecrets(
+            creds_path, scope=SCOPES, redirect_uri=redirect_uri)
+
+        state = secrets.token_urlsafe(24)
+        _pending_oauth_flows[state] = {"flow": flow, "creds_path": creds_path}
+
+        auth_url = flow.step1_get_authorize_url(state=state)
+        return jsonify({"authUrl": auth_url})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/authorize/callback', methods=['GET'])
+def authorize_callback():
+    """Google redirects here after the user approves/denies GSC access."""
+    global webmasters_service, verified_sites
+
+    state = request.args.get('state', '')
+    code = request.args.get('code', '')
+    pending = _pending_oauth_flows.pop(state, None)
+
+    if not pending or not code:
+        return redirect(f"{FRONTEND_REDIRECT_ORIGIN}/settings?authorized=0&error=invalid_state")
+
+    try:
+        credentials = pending['flow'].step2_exchange(code)
+
+        authorized_creds_path = os.path.join(DATA_DIR, 'authorizedcreds.dat')
+        storage = file.Storage(authorized_creds_path)
+        storage.put(credentials)
+
+        http = httplib2.Http()
+        http = credentials.authorize(http=http)
+        webmasters_service = build('searchconsole', 'v1', http=http)
+        verified_sites = get_verified_sites(webmasters_service)
+
+        config = load_config()
+        config['credentialsPath'] = pending['creds_path']
+        config['isAuthorized'] = True
+        save_config(config)
+
+        return redirect(f"{FRONTEND_REDIRECT_ORIGIN}/settings?authorized=1")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return redirect(f"{FRONTEND_REDIRECT_ORIGIN}/settings?authorized=0&error=exchange_failed")
+
+
+@app.route('/api/trends/authorize/start', methods=['GET'])
+def trends_authorize_start():
+    """Same idea as /api/authorize/start, but for the Google Trends scope."""
+    config = load_config()
+    client_secrets = request.args.get('trendsCredentialsPath', '') or config.get('trendsCredentialsPath', '')
+
+    if not client_secrets:
+        return jsonify({"error": "No Trends credentials path provided"}), 400
+    if not os.path.exists(client_secrets):
+        return jsonify({"error": f"Credentials file not found at {client_secrets}"}), 400
+
+    try:
+        from google_auth_oauthlib.flow import Flow
+        redirect_uri = f"{_oauth_redirect_base()}/api/trends/authorize/callback"
+        flow = Flow.from_client_secrets_file(
+            client_secrets, scopes=TRENDS_SCOPES, redirect_uri=redirect_uri)
+
+        state = secrets.token_urlsafe(24)
+        _pending_oauth_flows[state] = {"flow": flow, "client_secrets": client_secrets}
+
+        auth_url, _ = flow.authorization_url(
+            access_type='offline', include_granted_scopes='true', prompt='consent',
+            state=state)
+        return jsonify({"authUrl": auth_url})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/trends/authorize/callback', methods=['GET'])
+def trends_authorize_callback():
+    """Google redirects here after the user approves/denies Trends access."""
+    state = request.args.get('state', '')
+    code = request.args.get('code', '')
+    pending = _pending_oauth_flows.pop(state, None)
+
+    if not pending or not code:
+        return redirect(f"{FRONTEND_REDIRECT_ORIGIN}/settings?trendsAuthorized=0&error=invalid_state")
+
+    try:
+        pending['flow'].fetch_token(code=code)
+        credentials = pending['flow'].credentials
+
+        token_file = os.path.join(DATA_DIR, 'authorized_trends_token.json')
+        with open(token_file, 'w') as f:
+            f.write(credentials.to_json())
+
+        config = load_config()
+        config['trendsCredentialsPath'] = pending['client_secrets']
+        save_config(config)
+
+        return redirect(f"{FRONTEND_REDIRECT_ORIGIN}/settings?trendsAuthorized=1")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return redirect(f"{FRONTEND_REDIRECT_ORIGIN}/settings?trendsAuthorized=0&error=exchange_failed")
+
 
 @app.route('/api/settings/clear', methods=['POST'])
 def clear_settings():

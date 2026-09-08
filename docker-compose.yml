@@ -21,6 +21,7 @@ services:
       - "5001:5001"
     environment:
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
+      BACKEND_PUBLIC_URL: ${BACKEND_PUBLIC_URL:-}
       PORT: 5001
       DATA_DIR: /data
     volumes:

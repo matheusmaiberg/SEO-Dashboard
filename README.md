@@ -175,11 +175,20 @@ The repo ships with `Dockerfile` (frontend), `Dockerfile.backend` (backend) and 
 2. Set these environment variables on the resource (see `.env.example`):
    - `NEXT_PUBLIC_API_URL` — the backend's **public** URL as reached by the user's browser (e.g. `https://api.yourdomain.com`). This is baked in at build time, so set it before the first build.
    - `FRONTEND_ORIGIN` — the frontend's public URL (e.g. `https://dashboard.yourdomain.com`), used for the backend's CORS allow-list.
+   - `BACKEND_PUBLIC_URL` — the same backend URL as above, used to build the Google OAuth redirect URIs (see below).
 3. Give the `frontend` service a domain on port `3000` and the `backend` service a domain on port `5001` (Coolify assigns these per compose service).
 4. Attach persistent storage: the `backend` service mounts a `backend_data` volume at `/data` (via `DATA_DIR`) to keep `dashboard_config.json`, `authorizedcreds.dat` and `authorized_trends_token.json` across redeploys.
-5. Upload your Google `client_secret.json` into that same volume (e.g. `/data/client_secret.json`) and point `credentialsPath` in the **Settings** page to it.
+5. Upload your Google `client_secret.json` into that same volume (e.g. `/data/client_secret.json`) and point `credentialsPath` / `trendsCredentialsPath` in the **Settings** page to it.
 
-> **Heads-up on OAuth:** authorizing GSC/Trends credentials opens a local browser consent flow, which doesn't work on a headless server. Run the backend locally once (`python3 backend_api.py`) to complete authorization, then copy the resulting `authorizedcreds.dat` / `authorized_trends_token.json` into the server's `/data` volume.
+### Authorizing Google credentials on a server
+
+The **Authorize Credentials** / **Authorize Trends** buttons in Settings send the user's own browser to Google's consent screen and back, via `/api/authorize/start` → Google → `/api/authorize/callback` (and the `/api/trends/authorize/*` equivalent for Trends) — no browser or local port on the server itself is required, so this works the same way locally and on Coolify.
+
+For it to work, your OAuth client in Google Cloud Console must be a **Web application** client (not "Desktop app") with these Authorized redirect URIs registered:
+- `{BACKEND_PUBLIC_URL}/api/authorize/callback`
+- `{BACKEND_PUBLIC_URL}/api/trends/authorize/callback`
+
+(`http://localhost:5001/api/authorize/callback` etc. for local dev, since `BACKEND_PUBLIC_URL` can be left empty there.)
 
 To run the same setup locally:
 
@@ -228,7 +237,11 @@ gsc-dashboard/
 | GET | `/api/top-queries` | Get top performing queries |
 | GET | `/api/settings` | Get current settings |
 | POST | `/api/settings` | Save settings |
-| POST | `/api/authorize` | Authorize GSC credentials |
+| POST | `/api/authorize` | Authorize GSC credentials (local dev only — opens a browser on the backend host) |
+| GET | `/api/authorize/start` | Get a Google consent URL for GSC (server-friendly OAuth flow) |
+| GET | `/api/authorize/callback` | OAuth redirect target for the GSC consent flow |
+| GET | `/api/trends/authorize/start` | Get a Google consent URL for Trends |
+| GET | `/api/trends/authorize/callback` | OAuth redirect target for the Trends consent flow |
 | POST | `/api/settings/clear` | Clear all credentials |
 | POST | `/api/insights/daily` | Generate AI insights for daily data |
 | POST | `/api/insights/queries` | Generate AI insights for query data |
